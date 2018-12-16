@@ -30,6 +30,7 @@ SOFTWARE.
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <mpi.h>
 #include <math.h>
 #include  <time.h>
@@ -37,10 +38,10 @@ SOFTWARE.
 
 MPI_Status Stat;
 void partition (float *array, int elements, float pivot, float **arraysmall, float **arraybig, int *endsmall, int *endbig);
-float selection(float *array,float number);
+float selection(float *array,int number);
 
 /***Kills processes that have no values left in their arrays****/
-void removeElement(int *array, int *size, float element)
+void removeElement(int *array, int *size, int element)
 {
     int i;
     int flag=0;
@@ -56,6 +57,20 @@ void removeElement(int *array, int *size, float element)
     }
     *size=*size-1;
 }
+
+bool isPowerOfTwo(int n)
+{
+  if (n == 0)
+    return 0;
+  while (n != 1)
+  {
+      if (n%2 != 0)
+         return 0;
+      n = n/2;
+  }
+  return 1;
+}
+
 
 /***Calculate Lengths and Send them to the corresponding Node***/
 void sendLengths(int size,int noProcesses)
@@ -82,7 +97,7 @@ void sendLengths(int size,int noProcesses)
 /****Swaps two values in an array****/
 void swap_values(float *array,int x,int y)
 {
-    float temp;
+    float  temp;
     temp=array[x];
     array[x]=array[y];
     array[y]=temp;
@@ -95,7 +110,7 @@ void generateNumbers(float *numberPart,int partLength, int cal)
     int i;
     for(i=0; i<partLength; i++){
         numberPart[i]=(float)rand()/(float)(RAND_MAX)-(float)rand()/(float)(RAND_MAX);
-        printf("%f\n", numberPart[i]);
+        //printf("%f\n", numberPart[i]);
       }
 
 }
@@ -103,7 +118,7 @@ void generateNumbers(float *numberPart,int partLength, int cal)
 /***Validates the stability of the operation****/
 void validation(float median,int partLength,int size,float *numberPart,int processId)
 {
-    MPI_Bcast(&median,1,MPI_INT,0,MPI_COMM_WORLD);
+    MPI_Bcast(&median,1,MPI_FLOAT,0,MPI_COMM_WORLD);
 	   int countMin=0;
     int countMax=0;
     int countEq=0;
@@ -162,9 +177,10 @@ void validationST(float median,int size,float *numberPart)
 }
 
 /****Part executed only by the Master Node****/
-int masterPart(int noProcesses,int processId,int size,int partLength,float *numberPart) //MASTER NODE CODE
+float masterPart(int noProcesses,int processId,int size,int partLength,float *numberPart) //MASTER NODE CODE
 {
-    int elements,i,keepBigSet,sumSets,finalize,median,randomNode,pivot,k,tempPivot;
+    int elements,i,keepBigSet,sumSets,finalize,randomNode,k;
+    float pivot, tempPivot, median;
     int endSmall=0;
     int dropoutFlag=0;
     int endBig=0;
@@ -279,16 +295,16 @@ int masterPart(int noProcesses,int processId,int size,int partLength,float *numb
             {
                 srand(time(NULL));
                 pivot=arrayToUse[rand() % elements];
-                MPI_Bcast(&pivot,1,MPI_INT,0,MPI_COMM_WORLD); //SECOND BROADCAST : SENDING PIVOT   k ton stelnw sto lao
+                MPI_Bcast(&pivot,1,MPI_FLOAT,0,MPI_COMM_WORLD); //SECOND BROADCAST : SENDING PIVOT   k ton stelnw sto lao
 	        }
             else
             {
-                MPI_Bcast(&tempPivot,1,MPI_INT,0,MPI_COMM_WORLD); //SECOND BROADCAST : SENDING PIVOT   k ton stelnw sto lao
+                MPI_Bcast(&tempPivot,1,MPI_FLOAT,0,MPI_COMM_WORLD); //SECOND BROADCAST : SENDING PIVOT   k ton stelnw sto lao
                 pivot=tempPivot;
             }
         }
         else //If not.. wait for the pivot to be received.
-            MPI_Bcast(&pivot,1,MPI_INT,randomNode,MPI_COMM_WORLD);  // SECOND BROADCAST : RECEIVING PIVOT
+            MPI_Bcast(&pivot,1,MPI_FLOAT,randomNode,MPI_COMM_WORLD);  // SECOND BROADCAST : RECEIVING PIVOT
         if(stillActive==1)  //If i still have values in my array.. proceed
         {
             partition(arrayToUse,elements,pivot,&arraySmall,&arrayBig,&endSmall,&endBig);  //I partition my array  // endsmall=number of elements in small array, it may be 0
@@ -381,14 +397,15 @@ int masterPart(int noProcesses,int processId,int size,int partLength,float *numb
 /***Executed only by Slave nodes!!*****/
 void slavePart(int processId,int partLength,float *numberPart,int size)  //code here is for the cheap slaves :P
 {
-	int dropoutflag,elements,i,sumSets,finalize,keepBigSet,pivot,randomNode,tempPivot;
+	int dropoutflag,elements,i,sumSets,finalize,keepBigSet,randomNode;
+    float pivot, tempPivot;
     int endSmall=0;
     int endBig=0;
     float *arraySmall,*arrayBig,*arrayToUse;
 	arrayToUse=numberPart;
 	elements=partLength;
 	int stillActive=1;
-	int *pivotArray;
+	float *pivotArray;
     int oldSumSets=-1;
     int checkIdentical=0;
     int useNewPivot;
@@ -430,18 +447,18 @@ void slavePart(int processId,int partLength,float *numberPart,int size)  //code 
         }
         MPI_Bcast(&randomNode,1,MPI_INT,0,MPI_COMM_WORLD); //FIRST BROAD CAST : RECEIVING RANDOM NODE, perimenw na dw poios einaito done
         if(randomNode!=processId) //means I am not the one to chose pivot.. so I wait to receive the pivot
-            MPI_Bcast(&pivot,1,MPI_INT,randomNode,MPI_COMM_WORLD);	//SECOND BROADCAST : RECEIVING PIVOT
+            MPI_Bcast(&pivot,1,MPI_FLOAT,randomNode,MPI_COMM_WORLD);	//SECOND BROADCAST : RECEIVING PIVOT
         else if(randomNode==processId) //I am choosing suckers
         {
             if(useNewPivot==0)
             {
                 srand(time(NULL));
                 pivot=arrayToUse[rand() % elements];
-                MPI_Bcast(&pivot,1,MPI_INT,processId,MPI_COMM_WORLD); //SECOND BROADCAST : SENDING PIVOT   k ton stelnw sto lao
+                MPI_Bcast(&pivot,1,MPI_FLOAT,processId,MPI_COMM_WORLD); //SECOND BROADCAST : SENDING PIVOT   k ton stelnw sto lao
             }
             else
             {
-                MPI_Bcast(&tempPivot,1,MPI_INT,processId,MPI_COMM_WORLD); //SECOND BROADCAST : SENDING PIVOT   k ton stelnw sto lao
+                MPI_Bcast(&tempPivot,1,MPI_FLOAT,processId,MPI_COMM_WORLD); //SECOND BROADCAST : SENDING PIVOT   k ton stelnw sto lao
                 pivot=tempPivot;
             }
         }
@@ -522,6 +539,9 @@ void slavePart(int processId,int partLength,float *numberPart,int size)  //code 
 /*****MAIN!!!!!!!!!!*****/
 int main (int argc, char **argv)
 {
+
+
+
     int processId,noProcesses,size,partLength;
     float median;
     float *numberPart;
@@ -530,6 +550,15 @@ int main (int argc, char **argv)
     MPI_Init (&argc, &argv);	/* starts MPI */
     MPI_Comm_rank (MPI_COMM_WORLD, &processId);	/* get current process id */
     MPI_Comm_size (MPI_COMM_WORLD, &noProcesses);	/* get number of processes */
+
+    if  (!isPowerOfTwo(noProcesses)) {
+      if (processId == 0){
+          printf("Number of Processes must be power of 2\n");
+      }
+      MPI_Finalize();
+      return 0;
+    }
+
     if(processId==0)
     {
         printf("size: %d processes: %d\n",size,noProcesses);
@@ -661,7 +690,7 @@ void partition (float *array, int elements, float pivot, float **arraysmall, flo
 /***==============================================***/
 /***==============================================***/
 
-float selection(float *array,float number)
+float selection(float *array,int number)
 {
     float *arraybig;
     float *arraysmall;

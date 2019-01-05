@@ -35,10 +35,13 @@ SOFTWARE.
 #include <math.h>
 #include  <time.h>
 #include <sys/time.h>
+#include <string.h>
 
 MPI_Status Stat;
 void partition (float *array, int elements, float pivot, float **arraysmall, float **arraybig, int *endsmall, int *endbig);
 float selection(float *array,int number);
+int getDataSize();
+void readfile(float **P);
 
 /***Kills processes that have no values left in their arrays****/
 void removeElement(int *array, int *size, int element)
@@ -104,15 +107,38 @@ void swap_values(float *array,int x,int y)
 }
 
 /*****Send random numbers to every node.*****/
-void generateNumbers(float *numberPart,int partLength, int cal)
+float** splitArray(float **P,int partLength, int cal, int modNumber)
 {
-    srand((cal+1)*time(NULL));     //Generate number to fill the array
-    int i;
-    for(i=0; i<partLength; i++){
-        numberPart[i]=(float)rand()/(float)(RAND_MAX)-(float)rand()/(float)(RAND_MAX);
-        //printf("%f\n", numberPart[i]);
+    float **arrayPart = malloc(partLength* sizeof( float *));
+    for ( int i=0; i<partLength; i++)
+      arrayPart[i] = malloc(2*sizeof(float));
+    int index=0;
+    if (cal < modNumber)
+      index = cal * partLength;
+    else
+      index = partLength *modNumber + (cal- modNumber) *(partLength-1);
+    for(int i= 0; i<partLength; i++){
+        arrayPart[i][0] = P[index][0];
+        arrayPart[i][1] = P[index][1];
+        index++;
+        //if (cal==0)
+        //  printf("%d %f %f\n",index,P[index][0], arrayPart[i][1]);
       }
+    return arrayPart;
+      //printf("%d\n",partLength);
+}
 
+float *calcDist( float **coordArray, float *vantageP, int size){
+  float *dist = malloc(size*sizeof( float ));
+
+  for (int i=0; i<size; i++){
+      dist[i] = sqrtf (pow(coordArray[i][0] - vantageP[0] ,2) + pow(coordArray[i][1] - vantageP[1], 2) ) ;
+      //dist[i] = coordArray[i][0];
+      //printf("%f \n", dist[i]);
+  }
+  //printf("I AM IN CALCDIST %f\n", vantageP[0]);
+
+  return dist;
 }
 
 /***Validates the stability of the operation****/
@@ -542,11 +568,11 @@ int main (int argc, char **argv)
 
 
 
-    int processId,noProcesses,size,partLength;
+    int processId,noProcesses,size,partLength, vp;
     float median;
-    float *numberPart;
+    float *numberPart, **arrayPart, *vantageP;
 
-    size=atoi(argv[1]);
+    size=getDataSize();
     MPI_Init (&argc, &argv);	/* starts MPI */
     MPI_Comm_rank (MPI_COMM_WORLD, &processId);	/* get current process id */
     MPI_Comm_size (MPI_COMM_WORLD, &noProcesses);	/* get number of processes */
@@ -559,23 +585,51 @@ int main (int argc, char **argv)
       return 0;
     }
 
+    float **P = malloc(size*sizeof( float *));
+    for (int i=0; i<size; i++){
+      P[i] = malloc(2*sizeof(float));
+    }
+    readfile(P);
     if(processId==0)
     {
         printf("size: %d processes: %d\n",size,noProcesses);
+
+
+          vantageP = malloc(2*sizeof(float));
+
+
+
+
         if(noProcesses>1)
         {
+
+
             if(size%noProcesses==0)
                 partLength=(size/noProcesses);
             else
                 partLength=(size/noProcesses)+1;
+            //printf("%d \n", partLength);
             sendLengths(size,noProcesses);
-            numberPart=(float*)malloc(partLength*sizeof(float));
-            generateNumbers(numberPart,partLength,processId);
+
+            arrayPart = splitArray(P,partLength,processId,size%noProcesses);
+            srand(time(NULL));
+            vp = rand() %partLength;
+            printf("Vantage Point = %d\n", vp);
+            //printf("%f\n", arrayPart[vp][0]);
+            vantageP = arrayPart[vp] ;
+            printf("%f %f \n",vantageP[0],vantageP[1]);
+
+              for (int i=1; i<noProcesses; i++)
+              MPI_Send(vantageP, 2, MPI_FLOAT,i,0,MPI_COMM_WORLD);
+            numberPart = calcDist(arrayPart, vantageP, partLength);
+            //printf(" HELLO THERE \n");
         }
         else
         {
-            numberPart=(float*)malloc(size*sizeof(float));
-            generateNumbers(numberPart,size,processId);
+
+            vp = rand() %size;
+            vantageP = P[vp] ;
+            numberPart = calcDist(P, vantageP, size);
             struct timeval first, second, lapsed;
             struct timezone tzp;
             gettimeofday(&first, &tzp);
@@ -598,9 +652,21 @@ int main (int argc, char **argv)
     }
     else
     {
+        //printf("HI THERE\n");
         MPI_Recv(&partLength,1,MPI_INT,0,1,MPI_COMM_WORLD,&Stat);
-        numberPart=(float*)malloc(partLength*sizeof(float));
-        generateNumbers(numberPart,partLength,processId);
+        //printf("%d\n",partLength);
+        //arrayPart=malloc(partLength*sizeof(float *));
+        //printf("%d\n",partLength);
+
+        vantageP = malloc(2*sizeof(float));
+        MPI_Recv(vantageP, 2, MPI_FLOAT, 0, 0, MPI_COMM_WORLD,&Stat);
+        //printf(" %f %f\n", vantageP[0],vantageP[1]);
+        arrayPart=splitArray(P,partLength,processId, size%noProcesses);
+
+        //for (int i=0; i<partLength; i++)
+          //printf("%f \n", arrayPart[i][1]);
+        numberPart = calcDist(arrayPart, vantageP, partLength);
+        //printf("%d\n",partLength);
     }
     if(processId==0)
     {
@@ -741,4 +807,82 @@ float selection(float *array,int number)
         }
     }
     return median;
+}
+
+
+int getDataSize(){
+  char ch;
+  int noLines=0;
+  char *filename= "cities.txt";
+  FILE *fp1 = fopen(filename,"r");
+
+  while ( (ch = fgetc(fp1)) != EOF )
+  {
+    if (ch =='\n')
+    {
+      noLines++;
+
+    }
+  }
+
+  fclose(fp1);
+
+  return noLines-1;
+
+}
+
+
+void readfile(float **P)
+{
+  int counter=0;
+  char ch;
+  char *blah, *number1, *number2;
+  char *filename= "cities.txt";
+
+
+//  float **P = malloc((noLines-1)*sizeof( float *));
+//  for (int i=0; i<noLines-1; i++){
+  //  P[i] = malloc(2*sizeof(float));
+//  }
+
+
+  FILE *fp = fopen(filename,"r");
+  char line [ 256 ]; /* or other suitable maximum line size */
+
+  int i = 0;
+  fgets ( line, sizeof line, fp );
+  while ( fgets ( line, sizeof line, fp ) != NULL ) /* read a line */
+  {
+    blah = strtok(line, ",");
+    blah = strtok(NULL, ",");
+    blah = strtok(NULL, ",");
+    blah = strtok(NULL, ",");
+
+    number1 = strtok(NULL, ",");
+    number2 = strtok(NULL, ",");
+
+    if (number1 != NULL){
+      P[i][0] = atof(number1);
+    }
+    else{
+      P[i][0] = 0;
+
+    }
+
+    if (number2 != NULL){
+      P[i][1] = atof(number2);
+    }
+    else{
+      P[i][1] = 0;
+
+    }
+    //printf(" %f %f \n",P[i][0],P[i][1] );
+    i = i+1;
+    //printf("%d \n",i);
+  }
+
+
+  fclose(fp);
+
+
 }
